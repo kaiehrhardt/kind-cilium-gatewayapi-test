@@ -12,7 +12,7 @@ image:
   pullSecrets: []
 ui:
   color: "#34577c"
-  message: ""
+  message: "served via Gateway API"
   logo: ""
 # failure conditions
 faults:

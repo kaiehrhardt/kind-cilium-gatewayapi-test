@@ -1,0 +1,14 @@
+replicaCount: 2
+logLevel: info
+ui:
+  color: "#e8563a"
+  message: "served via Ingress"
+
+ingress:
+  enabled: true
+  className: cilium
+  hosts:
+    - host: podinfo.172.18.50.2.nip.io
+      paths:
+        - path: /
+          pathType: Prefix

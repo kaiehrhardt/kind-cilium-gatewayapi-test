@@ -1,18 +1,24 @@
 version: '3'
 
 vars:
-  vip: 172.18.50.1
-  hostname:
-    sh: echo "podinfo.{{.vip}}.nip.io"
+  GWAPI_VIP: 172.18.50.1
+  INGRESS_VIP: 172.18.50.2
+  GWAPI_HOSTNAME:
+    sh: echo "podinfo.{{.GWAPI_VIP}}.nip.io"
+  INGRESS_HOSTNAME:
+    sh: echo "podinfo.{{.INGRESS_VIP}}.nip.io"
 
 tasks:
   default:
     cmds:
       - task --list-all
-  update-vip:
+  update-vips:
     cmds:
-      - yq -i e '.httpRoute.hostnames[0] = "{{.hostname}}"' app/podinfo.yaml
-      - yq -i e '.spec.blocks[0].cidr = "{{.vip}}/32"' cilium/pool.yaml
+      - yq -i e '.httpRoute.hostnames[0] = "{{.GWAPI_HOSTNAME}}"' app/podinfo-gwapi.yaml
+      - yq -i e '.ingress.hosts[0].host = "{{.INGRESS_HOSTNAME}}"' app/podinfo-ingress.yaml
+      - yq -i e '.spec.blocks[0].cidr = "{{.GWAPI_VIP}}/32"' cilium/pool.yaml
+      - yq -i e '.spec.blocks[1].cidr = "{{.INGRESS_VIP}}/32"' cilium/pool.yaml
+      - yq -i e '.metadata.annotations["lbipam.cilium.io/ips"] = "{{.GWAPI_VIP}}"' cilium/gateway.yaml
   kind:
     cmds:
       - kind create cluster --config=./cluster.yaml
@@ -36,6 +42,10 @@ tasks:
         cilium install \
           --set kubeProxyReplacement=true \
           --set gatewayAPI.enabled=true \
+          --set ingressController.enabled=true \
+          --set ingressController.default=true \
+          --set ingressController.loadbalancerMode=shared \
+          --set ingressController.service.loadBalancerIP={{.INGRESS_VIP}} \
           --set l2announcements.enabled=true \
           --set hubble.enabled=true \
           --set hubble.relay.enabled=true \
@@ -45,16 +55,23 @@ tasks:
   lb:
     cmds:
       - kubectl apply -f cilium
-  podinfo:
+  podinfo-gwapi:
     cmds:
-      - helm upgrade --install podinfo oci://ghcr.io/stefanprodan/charts/podinfo -f app/podinfo.yaml
-  test:
+      - helm upgrade --install podinfo-gwapi oci://ghcr.io/stefanprodan/charts/podinfo -f app/podinfo-gwapi.yaml
+  podinfo-ingress:
     cmds:
-      - while /bin/true; do curl -s {{.hostname}} | jq -r .hostname;sleep 1;done
+      - helm upgrade --install podinfo-ingress oci://ghcr.io/stefanprodan/charts/podinfo -f app/podinfo-ingress.yaml
+  test-gwapi:
+    cmds:
+      - while /bin/true; do curl -s {{.GWAPI_HOSTNAME}} | jq -r .hostname;sleep 1;done
+  test-ingress:
+    cmds:
+      - while /bin/true; do curl -s {{.INGRESS_HOSTNAME}} | jq -r .hostname;sleep 1;done
   install:
     cmds:
       - task: kind
       - task: gwapi
       - task: cilium
       - task: lb
-      - task: podinfo
+      - task: podinfo-gwapi
+      - task: podinfo-ingress

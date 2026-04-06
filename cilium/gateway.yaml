@@ -2,6 +2,8 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: gateway
+  annotations:
+    lbipam.cilium.io/ips: "172.18.50.1"
 spec:
   gatewayClassName: cilium
   listeners:
