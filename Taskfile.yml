@@ -1,0 +1,46 @@
+version: '3'
+
+tasks:
+  default:
+    cmds:
+      - task --list-all
+  kind:
+    cmds:
+      - kind create cluster --config=./cluster.yaml
+  delete:
+    cmds:
+      - kind delete cluster
+  gwapi:
+    vars:
+      version: v1.4.1
+    cmds:
+      - kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/{{.version}}/config/crd/standard/gateway.networking.k8s.io_gatewayclasses.yaml
+      - kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/{{.version}}/config/crd/standard/gateway.networking.k8s.io_gateways.yaml
+      - kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/{{.version}}/config/crd/standard/gateway.networking.k8s.io_httproutes.yaml
+      - kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/{{.version}}/config/crd/standard/gateway.networking.k8s.io_referencegrants.yaml
+      - kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/{{.version}}/config/crd/standard/gateway.networking.k8s.io_grpcroutes.yaml
+      - kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/{{.version}}/config/crd/standard/gateway.networking.k8s.io_backendtlspolicies.yaml
+      - kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/{{.version}}/config/crd/experimental/gateway.networking.k8s.io_tlsroutes.yaml
+  cilium:
+    cmds:
+      - cilium install --set kubeProxyReplacement=true --set gatewayAPI.enabled=true --set l2announcements.enabled=true
+      - cilium status --wait
+  lb:
+    cmds:
+      - kubectl apply -f cilium/pool.yaml
+      - kubectl apply -f cilium/announcement.yaml
+      - kubectl apply -f cilium/gateway.yaml
+  podinfo:
+    cmds:
+      - helm upgrade --install podinfo oci://ghcr.io/stefanprodan/charts/podinfo -f app/podinfo.yaml
+  test:
+    cmds:
+      - while /bin/true; do curl -s podinfo.172.18.50.1.nip.io | jq -r .hostname;sleep 1;done
+  install:
+    cmds:
+      - task: kind
+      - task: gwapi
+      - task: cilium
+      - task: lb
+      - task: podinfo
+      - task: test
