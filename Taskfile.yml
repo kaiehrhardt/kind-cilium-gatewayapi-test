@@ -7,6 +7,8 @@ vars:
     sh: echo "podinfo.{{.GWAPI_VIP}}.nip.io"
   INGRESS_HOSTNAME:
     sh: echo "podinfo.{{.INGRESS_VIP}}.nip.io"
+  HUBBLE_HOSTNAME:
+    sh: echo "hubble.{{.INGRESS_VIP}}.nip.io"
 
 tasks:
   default:
@@ -49,7 +51,10 @@ tasks:
           --set l2announcements.enabled=true \
           --set hubble.enabled=true \
           --set hubble.relay.enabled=true \
-          --set hubble.ui.enabled=true
+          --set hubble.ui.enabled=true \
+          --set hubble.ui.ingress.enabled=true \
+          --set hubble.ui.ingress.className=cilium \
+          --set "hubble.ui.ingress.hosts={{{.HUBBLE_HOSTNAME}}}"
       - cilium status --wait
       - cilium hubble enable --ui
   lb:
