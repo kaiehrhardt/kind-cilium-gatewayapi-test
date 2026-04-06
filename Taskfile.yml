@@ -1,9 +1,18 @@
 version: '3'
 
+vars:
+  vip: 172.18.50.1
+  hostname:
+    sh: echo "podinfo.{{.vip}}.nip.io"
+
 tasks:
   default:
     cmds:
       - task --list-all
+  update-vip:
+    cmds:
+      - yq -i e '.httpRoute.hostnames[0] = "{{.hostname}}"' app/podinfo.yaml
+      - yq -i e '.spec.blocks[0].cidr = "{{.vip}}/32"' cilium/pool.yaml
   kind:
     cmds:
       - kind create cluster --config=./cluster.yaml
@@ -23,19 +32,25 @@ tasks:
       - kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/{{.version}}/config/crd/experimental/gateway.networking.k8s.io_tlsroutes.yaml
   cilium:
     cmds:
-      - cilium install --set kubeProxyReplacement=true --set gatewayAPI.enabled=true --set l2announcements.enabled=true
+      - |
+        cilium install \
+          --set kubeProxyReplacement=true \
+          --set gatewayAPI.enabled=true \
+          --set l2announcements.enabled=true \
+          --set hubble.enabled=true \
+          --set hubble.relay.enabled=true \
+          --set hubble.ui.enabled=true
       - cilium status --wait
+      - cilium hubble enable --ui
   lb:
     cmds:
-      - kubectl apply -f cilium/pool.yaml
-      - kubectl apply -f cilium/announcement.yaml
-      - kubectl apply -f cilium/gateway.yaml
+      - kubectl apply -f cilium
   podinfo:
     cmds:
       - helm upgrade --install podinfo oci://ghcr.io/stefanprodan/charts/podinfo -f app/podinfo.yaml
   test:
     cmds:
-      - while /bin/true; do curl -s podinfo.172.18.50.1.nip.io | jq -r .hostname;sleep 1;done
+      - while /bin/true; do curl -s {{.hostname}} | jq -r .hostname;sleep 1;done
   install:
     cmds:
       - task: kind
@@ -43,4 +58,3 @@ tasks:
       - task: cilium
       - task: lb
       - task: podinfo
-      - task: test

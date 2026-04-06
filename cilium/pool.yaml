@@ -4,4 +4,4 @@ metadata:
   name: "default"
 spec:
   blocks:
-  - cidr: "172.18.50.1/32"
+    - cidr: "172.18.50.1/32"
