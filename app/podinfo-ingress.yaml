@@ -4,6 +4,9 @@ ui:
   color: "#e8563a"
   message: "served via Ingress"
 
+podAnnotations:
+  policy.cilium.io/proxy-visibility: "<Ingress/80/TCP/HTTP>,<Egress/80/TCP/HTTP>"
+
 ingress:
   enabled: true
   className: cilium

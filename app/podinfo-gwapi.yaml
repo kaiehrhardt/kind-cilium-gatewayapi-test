@@ -247,7 +247,8 @@ resources:
 nodeSelector: {}
 tolerations: []
 affinity: {}
-podAnnotations: {}
+podAnnotations:
+  policy.cilium.io/proxy-visibility: "<Ingress/80/TCP/HTTP>,<Egress/80/TCP/HTTP>"
 # https://kubernetes.io/docs/concepts/workloads/pods/pod-topology-spread-constraints/
 topologySpreadConstraints: []
 # Disruption budget will be configured only when the replicaCount is greater than 1
