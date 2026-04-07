@@ -1,0 +1,15 @@
+---
+# TLS certificate for the Gateway API HTTPS listener
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gateway-tls
+  namespace: default
+spec:
+  secretName: gateway-tls-secret
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer
+    group: cert-manager.io
+  dnsNames:
+    - podinfo.172.18.50.1.nip.io

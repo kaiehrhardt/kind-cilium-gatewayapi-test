@@ -18,9 +18,12 @@ tasks:
     cmds:
       - yq -i e '.httpRoute.hostnames[0] = "{{.GWAPI_HOSTNAME}}"' app/podinfo-gwapi.yaml
       - yq -i e '.ingress.hosts[0].host = "{{.INGRESS_HOSTNAME}}"' app/podinfo-ingress.yaml
+      - yq -i e '.ingress.tls[0].hosts[0] = "{{.INGRESS_HOSTNAME}}"' app/podinfo-ingress.yaml
       - yq -i e '.spec.blocks[0].cidr = "{{.GWAPI_VIP}}/32"' cilium/pool.yaml
       - yq -i e '.spec.blocks[1].cidr = "{{.INGRESS_VIP}}/32"' cilium/pool.yaml
       - yq -i e '.metadata.annotations["lbipam.cilium.io/ips"] = "{{.GWAPI_VIP}}"' cilium/gateway.yaml
+      - yq -i e '.hubble.ui.ingress.hosts[0] = "{{.HUBBLE_HOSTNAME}}"' hubble-values.yaml
+      - yq -i e '.hubble.ui.ingress.tls[0].hosts[0] = "{{.HUBBLE_HOSTNAME}}"' hubble-values.yaml
   kind:
     cmds:
       - kind create cluster --config=./cluster.yaml
@@ -54,7 +57,7 @@ tasks:
           --set hubble.ui.enabled=true \
           --set hubble.ui.ingress.enabled=true \
           --set hubble.ui.ingress.className=cilium \
-          --set "hubble.ui.ingress.hosts={{{.HUBBLE_HOSTNAME}}}"
+          --values hubble-values.yaml
       - cilium status --wait
       - cilium hubble enable --ui
   lb:
@@ -69,14 +72,42 @@ tasks:
   test-gwapi:
     cmds:
       - while /bin/true; do curl -s {{.GWAPI_HOSTNAME}} | jq -r .hostname;sleep 1;done
+  test-gwapi-https:
+    vars:
+      CA_CERT:
+        sh: kubectl get secret selfsigned-ca-secret -n cert-manager -o jsonpath='{.data.ca\.crt}' | base64 -d
+    cmds:
+      - while /bin/true; do curl -s --cacert <(echo "{{.CA_CERT}}") https://{{.GWAPI_HOSTNAME}} | jq -r .hostname;sleep 1;done
+    silent: true
   test-ingress:
     cmds:
       - while /bin/true; do curl -s {{.INGRESS_HOSTNAME}} | jq -r .hostname;sleep 1;done
+  test-ingress-https:
+    vars:
+      CA_CERT:
+        sh: kubectl get secret selfsigned-ca-secret -n cert-manager -o jsonpath='{.data.ca\.crt}' | base64 -d
+    cmds:
+      - while /bin/true; do curl -s --cacert <(echo "{{.CA_CERT}}") https://{{.INGRESS_HOSTNAME}} | jq -r .hostname;sleep 1;done
+    silent: true
+  cert-manager:
+    cmds:
+      - helm repo add jetstack https://charts.jetstack.io --force-update
+      - |
+        helm upgrade --install cert-manager jetstack/cert-manager \
+          --namespace cert-manager \
+          --create-namespace \
+          --set crds.enabled=true \
+          --wait
+  cert-manager-issuers:
+    cmds:
+      - kubectl apply -f cert-manager
   install:
     cmds:
       - task: kind
       - task: gwapi
       - task: cilium
       - task: lb
+      - task: cert-manager
+      - task: cert-manager-issuers
       - task: podinfo-gwapi
       - task: podinfo-ingress

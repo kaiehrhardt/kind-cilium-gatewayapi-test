@@ -4,12 +4,12 @@ A minimal, reproducible local Kubernetes test environment that demonstrates a mo
 
 ## What this does
 
-Spins up a fully functional 3-node KinD cluster on your machine, replaces the default CNI and kube-proxy with Cilium, wires up both the Kubernetes Gateway API and the Ingress controller for ingress, and deploys two real test applications to validate both paths end-to-end.
+Spins up a fully functional 3-node KinD cluster on your machine, replaces the default CNI and kube-proxy with Cilium, wires up both the Kubernetes Gateway API and the Ingress controller for ingress, installs cert-manager with a self-signed CA, and deploys two real test applications to validate both HTTP and HTTPS paths end-to-end.
 
 **Traffic paths:**
 
 ```
-# Gateway API
+# Gateway API (HTTP)
 curl http://podinfo.172.18.50.1.nip.io
   → Docker bridge network
   → Cilium L2 ARP announcement (172.18.50.1)
@@ -17,12 +17,20 @@ curl http://podinfo.172.18.50.1.nip.io
   → HTTPRoute
   → podinfo-gwapi pod
 
-# Ingress
-curl http://podinfo.172.18.50.2.nip.io
+# Gateway API (HTTPS)
+curl https://podinfo.172.18.50.1.nip.io
+  → Docker bridge network
+  → Cilium L2 ARP announcement (172.18.50.1)
+  → Kubernetes Gateway API — TLS terminated with cert-manager certificate
+  → HTTPRoute
+  → podinfo-gwapi pod
+
+# Ingress (HTTP + HTTPS)
+curl http(s)://podinfo.172.18.50.2.nip.io
   → Docker bridge network
   → Cilium L2 ARP announcement (172.18.50.2)
   → Cilium Ingress Controller (shared mode)
-  → Ingress
+  → Ingress — TLS terminated with cert-manager certificate
   → podinfo-ingress pod
 ```
 
@@ -33,6 +41,7 @@ curl http://podinfo.172.18.50.2.nip.io
 | [KinD](https://kind.sigs.k8s.io/) | Local multi-node Kubernetes cluster inside Docker |
 | [Cilium](https://cilium.io/) | eBPF-based CNI; replaces kube-proxy, provides L2 LoadBalancer, Gateway API and Ingress support |
 | [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) | Modern replacement for Ingress (v1.4.1, including experimental CRDs) |
+| [cert-manager](https://cert-manager.io/) | Kubernetes-native certificate management; issues and rotates TLS certificates |
 | [Helm](https://helm.sh/) | Deploys the test applications |
 | [Task](https://taskfile.dev/) | Task runner orchestrating all setup steps |
 | [podinfo](https://github.com/stefanprodan/podinfo) | Lightweight Go microservice used as the test application |
@@ -63,22 +72,28 @@ This runs the following steps in order:
 2. `task gwapi` — installs Gateway API CRDs
 3. `task cilium` — installs Cilium (kube-proxy replacement + Gateway API + Ingress + L2 announcements + Hubble)
 4. `task lb` — applies the IP pool, L2 announcement policy, and Gateway object
-5. `task podinfo-gwapi` — deploys podinfo via Gateway API
-6. `task podinfo-ingress` — deploys podinfo via Ingress
+5. `task cert-manager` — installs cert-manager via Helm
+6. `task cert-manager-issuers` — applies the self-signed ClusterIssuer and TLS certificates
+7. `task podinfo-gwapi` — deploys podinfo via Gateway API
+8. `task podinfo-ingress` — deploys podinfo via Ingress
 
 ### Individual tasks
 
 ```sh
-task kind             # Create the cluster
-task delete           # Tear down the cluster
-task gwapi            # Install Gateway API CRDs
-task cilium           # Install Cilium
-task lb               # Apply Cilium networking manifests
-task podinfo-gwapi    # Deploy test application via Gateway API
-task podinfo-ingress  # Deploy test application via Ingress
-task test-gwapi       # Curl loop to verify Gateway API load balancing
-task test-ingress     # Curl loop to verify Ingress load balancing
-task update-vips      # Sync all VIP references across manifests
+task kind                   # Create the cluster
+task delete                 # Tear down the cluster
+task gwapi                  # Install Gateway API CRDs
+task cilium                 # Install Cilium
+task lb                     # Apply Cilium networking manifests
+task cert-manager           # Install cert-manager
+task cert-manager-issuers   # Apply ClusterIssuer and Certificate resources
+task podinfo-gwapi          # Deploy test application via Gateway API
+task podinfo-ingress        # Deploy test application via Ingress
+task test-gwapi             # Curl loop — Gateway API HTTP
+task test-gwapi-https       # Curl loop — Gateway API HTTPS (validated against self-signed CA)
+task test-ingress           # Curl loop — Ingress HTTP
+task test-ingress-https     # Curl loop — Ingress HTTPS (validated against self-signed CA)
+task update-vips            # Sync all VIP/hostname references across manifests
 ```
 
 ### Observability
@@ -96,10 +111,26 @@ hubble observe
 
 1. **Cilium L2 announcement** (`cilium/announcement.yaml`): Cilium answers ARP requests for both VIPs on `eth0`, making them reachable from the Docker host network without any static routes.
 2. **IP pool** (`cilium/pool.yaml`): Defines two `/32` blocks — `.1` for Gateway API, `.2` for Ingress.
-3. **Gateway** (`cilium/gateway.yaml`): A `Gateway` resource using `gatewayClassName: cilium` listens on port 80 and is pinned to `172.18.50.1` via the `lbipam.cilium.io/ips` annotation.
+3. **Gateway** (`cilium/gateway.yaml`): A `Gateway` resource using `gatewayClassName: cilium` listens on port 80 (HTTP) and port 443 (HTTPS). The HTTPS listener terminates TLS using the `gateway-tls-secret` issued by cert-manager.
 4. **Ingress Controller**: Cilium runs in shared mode — one `cilium-ingress` Service in `kube-system` handles all Ingress resources, pinned to `172.18.50.2` via `ingressController.service.loadBalancerIP`.
-5. **HTTPRoute** (defined in `app/podinfo-gwapi.yaml` Helm values): Routes traffic from `podinfo.172.18.50.1.nip.io` to the `podinfo-gwapi` ClusterIP service.
-6. **Ingress** (defined in `app/podinfo-ingress.yaml` Helm values): Routes traffic from `podinfo.172.18.50.2.nip.io` to the `podinfo-ingress` ClusterIP service.
+5. **HTTPRoute** (defined in `app/podinfo-gwapi.yaml` Helm values): Routes traffic from `podinfo.172.18.50.1.nip.io` to the `podinfo-gwapi` ClusterIP service, attached to both the HTTP and HTTPS listeners.
+6. **Ingress** (defined in `app/podinfo-ingress.yaml` Helm values): Routes traffic from `podinfo.172.18.50.2.nip.io` to the `podinfo-ingress` ClusterIP service, with a TLS block referencing `podinfo-ingress-tls-secret`.
+
+## TLS / cert-manager
+
+cert-manager is installed in the `cert-manager` namespace. The PKI setup (`cert-manager/cluster-issuer.yaml`) is a two-step chain:
+
+1. **`selfsigned-bootstrap`** (`ClusterIssuer`): A root self-signed issuer used only to create the CA certificate.
+2. **`selfsigned-ca`** (`Certificate`): A CA certificate stored as `selfsigned-ca-secret` in the `cert-manager` namespace.
+3. **`selfsigned`** (`ClusterIssuer`): The main issuer, backed by the CA above. All application certificates are issued by this issuer.
+
+| Certificate | Namespace | Secret | Covers |
+|---|---|---|---|
+| `gateway-tls` | `default` | `gateway-tls-secret` | `podinfo.172.18.50.1.nip.io` |
+| `podinfo-ingress-tls` | `default` | `podinfo-ingress-tls-secret` | `podinfo.172.18.50.2.nip.io` |
+| `hubble-tls` | `kube-system` | `hubble-tls-secret` | `hubble.172.18.50.2.nip.io` |
+
+The HTTPS test tasks (`test-gwapi-https`, `test-ingress-https`) fetch the CA certificate directly from the cluster secret and pass it to `curl --cacert` — the certificate is properly validated, not skipped with `-k`.
 
 ## Applications
 

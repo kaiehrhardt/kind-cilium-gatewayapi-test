@@ -10,3 +10,11 @@ spec:
   - name: web-gw
     port: 80
     protocol: HTTP
+  - name: https-gw
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - name: gateway-tls-secret
+          kind: Secret

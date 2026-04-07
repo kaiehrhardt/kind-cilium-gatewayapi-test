@@ -1,0 +1,9 @@
+hubble:
+  ui:
+    ingress:
+      hosts:
+        - hubble.172.18.50.2.nip.io
+      tls:
+        - secretName: hubble-tls-secret
+          hosts:
+            - hubble.172.18.50.2.nip.io

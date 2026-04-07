@@ -203,6 +203,10 @@ httpRoute:
   # Which Gateways this Route is attached to.
   parentRefs:
     - name: gateway
+      sectionName: web-gw
+      # namespace: default
+    - name: gateway
+      sectionName: https-gw
       # namespace: default
   # Hostnames matching HTTP header.
   hostnames:

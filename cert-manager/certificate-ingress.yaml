@@ -1,0 +1,15 @@
+---
+# TLS certificate for the Ingress (podinfo-ingress)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: podinfo-ingress-tls
+  namespace: default
+spec:
+  secretName: podinfo-ingress-tls-secret
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer
+    group: cert-manager.io
+  dnsNames:
+    - podinfo.172.18.50.2.nip.io

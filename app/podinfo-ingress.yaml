@@ -15,3 +15,7 @@ ingress:
       paths:
         - path: /
           pathType: Prefix
+  tls:
+    - secretName: podinfo-ingress-tls-secret
+      hosts:
+        - podinfo.172.18.50.2.nip.io

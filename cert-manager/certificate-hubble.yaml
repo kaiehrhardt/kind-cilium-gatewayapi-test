@@ -1,0 +1,15 @@
+---
+# TLS certificate for the Hubble UI Ingress
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: hubble-tls
+  namespace: kube-system
+spec:
+  secretName: hubble-tls-secret
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer
+    group: cert-manager.io
+  dnsNames:
+    - hubble.172.18.50.2.nip.io
