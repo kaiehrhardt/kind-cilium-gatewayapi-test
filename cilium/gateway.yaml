@@ -18,3 +18,8 @@ spec:
       certificateRefs:
         - name: gateway-tls-secret
           kind: Secret
+  - name: passthrough-gw
+    port: 8443
+    protocol: TLS
+    tls:
+      mode: Passthrough

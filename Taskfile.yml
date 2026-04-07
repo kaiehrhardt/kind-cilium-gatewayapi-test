@@ -9,6 +9,8 @@ vars:
     sh: echo "podinfo.{{.INGRESS_VIP}}.nip.io"
   HUBBLE_HOSTNAME:
     sh: echo "hubble.{{.INGRESS_VIP}}.nip.io"
+  PASSTHROUGH_HOSTNAME:
+    sh: echo "podinfo-passthrough.{{.GWAPI_VIP}}.nip.io"
 
 tasks:
   default:
@@ -22,8 +24,10 @@ tasks:
       - yq -i e '.spec.blocks[0].cidr = "{{.GWAPI_VIP}}/32"' cilium/pool.yaml
       - yq -i e '.spec.blocks[1].cidr = "{{.INGRESS_VIP}}/32"' cilium/pool.yaml
       - yq -i e '.metadata.annotations["lbipam.cilium.io/ips"] = "{{.GWAPI_VIP}}"' cilium/gateway.yaml
-      - yq -i e '.hubble.ui.ingress.hosts[0] = "{{.HUBBLE_HOSTNAME}}"' hubble-values.yaml
-      - yq -i e '.hubble.ui.ingress.tls[0].hosts[0] = "{{.HUBBLE_HOSTNAME}}"' hubble-values.yaml
+      - yq -i e '.hubble.ui.ingress.hosts[0] = "{{.HUBBLE_HOSTNAME}}"' cilium/hubble-values.yaml
+      - yq -i e '.hubble.ui.ingress.tls[0].hosts[0] = "{{.HUBBLE_HOSTNAME}}"' cilium/hubble-values.yaml
+      - yq -i e '.spec.hostnames[0] = "{{.PASSTHROUGH_HOSTNAME}}"' app/podinfo-passthrough-tlsroute.yaml
+      - yq -i e '.spec.dnsNames[0] = "{{.PASSTHROUGH_HOSTNAME}}"' cert-manager/certificate-passthrough.yaml
   kind:
     cmds:
       - kind create cluster --config=./cluster.yaml
@@ -57,18 +61,24 @@ tasks:
           --set hubble.ui.enabled=true \
           --set hubble.ui.ingress.enabled=true \
           --set hubble.ui.ingress.className=cilium \
-          --values hubble-values.yaml
+          --values cilium/hubble-values.yaml
       - cilium status --wait
       - cilium hubble enable --ui
   lb:
     cmds:
-      - kubectl apply -f cilium
+      - kubectl apply -f cilium/announcement.yaml
+      - kubectl apply -f cilium/pool.yaml
+      - kubectl apply -f cilium/gateway.yaml
   podinfo-gwapi:
     cmds:
       - helm upgrade --install podinfo-gwapi oci://ghcr.io/stefanprodan/charts/podinfo -f app/podinfo-gwapi.yaml
   podinfo-ingress:
     cmds:
       - helm upgrade --install podinfo-ingress oci://ghcr.io/stefanprodan/charts/podinfo -f app/podinfo-ingress.yaml
+  podinfo-passthrough:
+    cmds:
+      - helm upgrade --install podinfo-passthrough oci://ghcr.io/stefanprodan/charts/podinfo -f app/podinfo-passthrough.yaml
+      - kubectl apply -f app/podinfo-passthrough-tlsroute.yaml
   test-gwapi:
     cmds:
       - while /bin/true; do curl -s {{.GWAPI_HOSTNAME}} | jq -r .hostname;sleep 1;done
@@ -88,6 +98,13 @@ tasks:
         sh: kubectl get secret selfsigned-ca-secret -n cert-manager -o jsonpath='{.data.ca\.crt}' | base64 -d
     cmds:
       - while /bin/true; do curl -s --cacert <(echo "{{.CA_CERT}}") https://{{.INGRESS_HOSTNAME}} | jq -r .hostname;sleep 1;done
+    silent: true
+  test-passthrough:
+    vars:
+      CA_CERT:
+        sh: kubectl get secret selfsigned-ca-secret -n cert-manager -o jsonpath='{.data.ca\.crt}' | base64 -d
+    cmds:
+      - while /bin/true; do curl -s --cacert <(echo "{{.CA_CERT}}") https://{{.PASSTHROUGH_HOSTNAME}}:8443 | jq -r .hostname;sleep 1;done
     silent: true
   cert-manager:
     cmds:
@@ -111,3 +128,4 @@ tasks:
       - task: cert-manager-issuers
       - task: podinfo-gwapi
       - task: podinfo-ingress
+      - task: podinfo-passthrough

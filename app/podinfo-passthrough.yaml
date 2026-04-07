@@ -1,0 +1,26 @@
+replicaCount: 2
+logLevel: info
+ui:
+  color: "#2ecc71"
+  message: "served via TLS Passthrough"
+
+podAnnotations:
+  policy.cilium.io/proxy-visibility: "<Ingress/9899/TCP/HTTPS>"
+
+tls:
+  enabled: true
+  secretName: podinfo-passthrough-tls-secret
+  certPath: /data/cert
+  port: 9899
+
+service:
+  enabled: true
+  type: ClusterIP
+  httpPort: 9898
+  externalPort: 9898
+  grpcPort: 9999
+
+resources:
+  requests:
+    cpu: 1m
+    memory: 16Mi

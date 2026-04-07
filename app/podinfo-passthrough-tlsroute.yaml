@@ -1,0 +1,15 @@
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: podinfo-passthrough
+  namespace: default
+spec:
+  parentRefs:
+    - name: gateway
+      sectionName: passthrough-gw
+  hostnames:
+    - podinfo-passthrough.172.18.50.1.nip.io
+  rules:
+    - backendRefs:
+        - name: podinfo-passthrough
+          port: 9899

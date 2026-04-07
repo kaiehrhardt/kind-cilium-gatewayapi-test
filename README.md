@@ -17,13 +17,20 @@ curl http://podinfo.172.18.50.1.nip.io
   → HTTPRoute
   → podinfo-gwapi pod
 
-# Gateway API (HTTPS)
+# Gateway API (HTTPS — TLS terminated at Gateway)
 curl https://podinfo.172.18.50.1.nip.io
   → Docker bridge network
   → Cilium L2 ARP announcement (172.18.50.1)
   → Kubernetes Gateway API — TLS terminated with cert-manager certificate
   → HTTPRoute
   → podinfo-gwapi pod
+
+# Gateway API (TLS Passthrough — TLS terminated at Pod)
+curl https://podinfo-passthrough.172.18.50.1.nip.io:8443
+  → Docker bridge network
+  → Cilium L2 ARP announcement (172.18.50.1)
+  → Kubernetes Gateway API — TLSRoute, traffic forwarded encrypted
+  → podinfo-passthrough pod (terminates TLS with cert-manager certificate)
 
 # Ingress (HTTP + HTTPS)
 curl http(s)://podinfo.172.18.50.2.nip.io
@@ -74,8 +81,9 @@ This runs the following steps in order:
 4. `task lb` — applies the IP pool, L2 announcement policy, and Gateway object
 5. `task cert-manager` — installs cert-manager via Helm
 6. `task cert-manager-issuers` — applies the self-signed ClusterIssuer and TLS certificates
-7. `task podinfo-gwapi` — deploys podinfo via Gateway API
-8. `task podinfo-ingress` — deploys podinfo via Ingress
+7. `task podinfo-gwapi` — deploys podinfo via Gateway API (HTTP + HTTPS)
+8. `task podinfo-ingress` — deploys podinfo via Ingress (HTTP + HTTPS)
+9. `task podinfo-passthrough` — deploys podinfo with pod-level TLS via TLSRoute (Passthrough)
 
 ### Individual tasks
 
@@ -89,10 +97,12 @@ task cert-manager           # Install cert-manager
 task cert-manager-issuers   # Apply ClusterIssuer and Certificate resources
 task podinfo-gwapi          # Deploy test application via Gateway API
 task podinfo-ingress        # Deploy test application via Ingress
+task podinfo-passthrough    # Deploy test application with TLS Passthrough
 task test-gwapi             # Curl loop — Gateway API HTTP
 task test-gwapi-https       # Curl loop — Gateway API HTTPS (validated against self-signed CA)
 task test-ingress           # Curl loop — Ingress HTTP
 task test-ingress-https     # Curl loop — Ingress HTTPS (validated against self-signed CA)
+task test-passthrough       # Curl loop — TLS Passthrough on port 8443 (validated against self-signed CA)
 task update-vips            # Sync all VIP/hostname references across manifests
 ```
 
@@ -111,7 +121,10 @@ hubble observe
 
 1. **Cilium L2 announcement** (`cilium/announcement.yaml`): Cilium answers ARP requests for both VIPs on `eth0`, making them reachable from the Docker host network without any static routes.
 2. **IP pool** (`cilium/pool.yaml`): Defines two `/32` blocks — `.1` for Gateway API, `.2` for Ingress.
-3. **Gateway** (`cilium/gateway.yaml`): A `Gateway` resource using `gatewayClassName: cilium` listens on port 80 (HTTP) and port 443 (HTTPS). The HTTPS listener terminates TLS using the `gateway-tls-secret` issued by cert-manager.
+3. **Gateway** (`cilium/gateway.yaml`): A `Gateway` resource using `gatewayClassName: cilium` with three listeners, all pinned to `172.18.50.1` via the `lbipam.cilium.io/ips` annotation:
+   - **Port 80** (`HTTP`): plain HTTP, handled via `HTTPRoute`
+   - **Port 443** (`HTTPS`): TLS terminated at the Gateway using the `gateway-tls-secret` issued by cert-manager, then forwarded as plain HTTP to the pod via `HTTPRoute`
+   - **Port 8443** (`TLS Passthrough`): encrypted traffic forwarded as-is to the pod via `TLSRoute`; the pod terminates TLS itself using `podinfo-passthrough-tls-secret`
 4. **Ingress Controller**: Cilium runs in shared mode — one `cilium-ingress` Service in `kube-system` handles all Ingress resources, pinned to `172.18.50.2` via `ingressController.service.loadBalancerIP`.
 5. **HTTPRoute** (defined in `app/podinfo-gwapi.yaml` Helm values): Routes traffic from `podinfo.172.18.50.1.nip.io` to the `podinfo-gwapi` ClusterIP service, attached to both the HTTP and HTTPS listeners.
 6. **Ingress** (defined in `app/podinfo-ingress.yaml` Helm values): Routes traffic from `podinfo.172.18.50.2.nip.io` to the `podinfo-ingress` ClusterIP service, with a TLS block referencing `podinfo-ingress-tls-secret`.
@@ -128,17 +141,30 @@ cert-manager is installed in the `cert-manager` namespace. The PKI setup (`cert-
 |---|---|---|---|
 | `gateway-tls` | `default` | `gateway-tls-secret` | `podinfo.172.18.50.1.nip.io` |
 | `podinfo-ingress-tls` | `default` | `podinfo-ingress-tls-secret` | `podinfo.172.18.50.2.nip.io` |
+| `podinfo-passthrough-tls` | `default` | `podinfo-passthrough-tls-secret` | `podinfo-passthrough.172.18.50.1.nip.io` |
 | `hubble-tls` | `kube-system` | `hubble-tls-secret` | `hubble.172.18.50.2.nip.io` |
 
-The HTTPS test tasks (`test-gwapi-https`, `test-ingress-https`) fetch the CA certificate directly from the cluster secret and pass it to `curl --cacert` — the certificate is properly validated, not skipped with `-k`.
+The HTTPS test tasks (`test-gwapi-https`, `test-ingress-https`, `test-passthrough`) fetch the CA certificate directly from the cluster secret and pass it to `curl --cacert` — the certificate is properly validated, not skipped with `-k`.
+
+**TLS Passthrough vs. Gateway Termination:**
+
+| | TLS Termination at Gateway | TLS Passthrough |
+|---|---|---|
+| Gateway sees plaintext | yes | no |
+| Header-based routing | yes | no (SNI only) |
+| HTTP→HTTPS redirect | yes | no |
+| Cert lives in | Gateway Secret | Pod Secret |
+| Gateway API resource | `HTTPRoute` | `TLSRoute` |
+| Cilium CRD channel | standard | experimental |
 
 ## Applications
 
-Two separate Helm releases of podinfo are deployed for comparison:
+Three separate Helm releases of podinfo are deployed for comparison:
 
-| Release | Path | VIP | Hostname |
-|---|---|---|---|
-| `podinfo-gwapi` | Gateway API → HTTPRoute | `172.18.50.1` | `podinfo.172.18.50.1.nip.io` |
-| `podinfo-ingress` | Ingress Controller | `172.18.50.2` | `podinfo.172.18.50.2.nip.io` |
+| Release | Path | VIP | Port | Hostname |
+|---|---|---|---|---|
+| `podinfo-gwapi` | Gateway API → HTTPRoute | `172.18.50.1` | 80 / 443 | `podinfo.172.18.50.1.nip.io` |
+| `podinfo-passthrough` | Gateway API → TLSRoute (Passthrough) | `172.18.50.1` | 8443 | `podinfo-passthrough.172.18.50.1.nip.io` |
+| `podinfo-ingress` | Ingress Controller | `172.18.50.2` | 80 / 443 | `podinfo.172.18.50.2.nip.io` |
 
-Both use 2 replicas, a `ClusterIP` service, and minimal resource requests (1m CPU, 16Mi memory). The `podinfo-ingress` release uses a distinct UI color and message to make the two visually distinguishable.
+All releases use 2 replicas, a `ClusterIP` service, and minimal resource requests (1m CPU, 16Mi memory). Each release uses a distinct UI color and message to make the three visually distinguishable.
